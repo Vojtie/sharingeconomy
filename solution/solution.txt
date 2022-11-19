@@ -1,0 +1,33 @@
+Semaphore stanowisko[N], int ileStanowisko[N]
+Semaphore wejscie[N], int ileWejscie[N]
+
+Map<Tid, Semaphore> niePrzepuszczeni
+Map<Wid, bool> zajete
+Map<Tid, Wid> watekStanowisko
+
+List<Tid> czekajacy
+Map<Tid, int> ilePrzepuscil
+Semaphore czekajacy
+
+
+Enter(wid) {
+	P(czekajacy)
+// zaczyna chcieć wejsc
+	Czekajacy.add(this)
+	ilePrzepuscil[this] = 0
+// czy możemy objac stanowisko
+	If (ileStanowisko[wid] > 0 or
+	 ileWejscie[wid] > 0 or zajete[wid])
+		ileWejscie[id]++
+		V(czekajacy)
+		P(wejscie[id])
+	
+	while (!mozeszZostacPrzepuszczony)
+		niePrzepuscil = czekajacy.ostatni()
+		ileNiePrzepuszczeni[nieprzepuscil]++
+		P(niePrzepuszczeni[nieprzepuscil])
+		// dsk
+		
+	// zwieksz licznik przepuszczonych
+	// u przepuszczajacych
+}
