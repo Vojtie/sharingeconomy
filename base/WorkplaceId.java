@@ -1,0 +1,11 @@
+/*
+ * University of Warsaw
+ * Concurrent Programming Course 2022/2023
+ * Java Assignment
+ *
+ * Author: Konrad Iwanicki (iwanicki@mimuw.edu.pl)
+ */
+
+public abstract class WorkplaceId implements Comparable<WorkplaceId> {
+
+}
