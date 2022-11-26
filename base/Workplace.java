@@ -13,7 +13,7 @@ public abstract class Workplace {
     protected Workplace(WorkplaceId id) {
         this.id = id;
     }
-    
+
     public final WorkplaceId getId() {
         return this.id;
     }
