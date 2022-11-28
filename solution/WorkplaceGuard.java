@@ -9,7 +9,8 @@ class WorkplaceGuard extends Workplace {
 
     @Override
     public void use() {
-        // guard
+        mutex.acquire();
+        if (getCurrent)
         workplace.use();
     }
 }
