@@ -3,15 +3,15 @@ import java.util.concurrent.*;
 
 public class LitWorkshop implements Workshop {
 
-    private int n;
-
-    private final Map<Long, WorkplaceId> userToWid = new HashMap<>();
-
-    private final Map<WorkplaceId, int[]> counters = new HashMap<>(); // [] = {enterers, switchers, users}
+    int n;
+    // private final Map<Long, WorkplaceId> userToWid = new HashMap<>();
+    private final Map<WorkplaceId, int[]> counters = new HashMap<>(); // [] = {enterers, switchers}
 
     private final Map<Long, Semaphore> users = new ConcurrentHashMap<>();
 
     private final Map<Long, Object[]> userInfo = new ConcurrentHashMap<>(); // [] == {enter/switch, wants/prev, curr, isWaiting}
+
+    private final Map<Long, Boolean> isWaiting = new HashMap<>();
 
     private final Map<WorkplaceId, Occupation> occupation = new HashMap<>();
 
@@ -19,16 +19,21 @@ public class LitWorkshop implements Workshop {
 
     private final Map<WorkplaceId, Workplace> workplaces = new ConcurrentHashMap<>();
 
-    private WantingQueue wanting;
+    private final WantingQueue wanting;
 
     private final Semaphore mutex = new Semaphore(1, true);
 
     LitWorkshop(Collection<Workplace> workplaces) {
         n = workplaces.size();
         for (var workplace : workplaces) {
-            this.workplaces.put(workplace.getId(), new WorkplaceGuard(workplace));
+            var wid = workplace.getId();
+            this.workplaces.put(wid, new WorkplaceGuard(workplace, this));
+            counters.put(
+                    wid,
+                    new int[]{0, 0}
+            );
             occupation.put(
-                    workplace.getId(),
+                    wid,
                     Occupation.FREE
             );
         }
@@ -39,22 +44,26 @@ public class LitWorkshop implements Workshop {
     public Workplace enter(WorkplaceId wid) {
         try {
             mutex.acquire();
+            users.put(getMyId(), new Semaphore(0));
+            isWaiting.put(getMyId(), false);
             userInfo.put(getMyId(), new Object[]{"enter", wid, null, false}); // action, wantedWid, curWid, isWaiting
             wanting.add(getMyId());
 
-            if (!canEnter() || occupation.get(wid) != Occupation.FREE) {
+            if (!canEnter(wid) || occupation.get(wid) != Occupation.FREE) {
                 assert wanting.getLongestPassCount() == (2L * n) - 2;
-                if (!canEnter()) {
+                if (!canEnter(wid)) {
                     wanting.addBlocked(getMyId());
                 }
                 incrementEnterersCount(wid);
-                setIsWaiting(true);
+                setIsWaiting(getMyId(), true);
+                isWaiting.put(getMyId(), true);
                 mutex.release();
                 users.get(getMyId()).acquire(); // brak dsk
             } else {
                 occupation.put(wid, Occupation.WORKING);
                 wanting.pass(getMyId());
                 userInfo.get(getMyId())[3] = false;
+                isWaiting.put(getMyId(), false);
                 userInfo.get(getMyId())[2] = wid;
                 userInfo.get(getMyId())[1] = null;
                 mutex.release();
@@ -66,17 +75,11 @@ public class LitWorkshop implements Workshop {
         }
     }
 
-    public void use() {
-        // wake up if someone was blocked by me
-        WorkplaceId wid = new WorkplaceId() {
-            @Override
-            public int compareTo(WorkplaceId o) {
-                return 0;
-            }
-        }; // this wid
+    void use(WorkplaceId wid) {
         try {
             // state is set
             this.mutex.acquire();
+            wanting.remove(getMyId()); // exit Queue
             if (getWantedAction(getMyId()).equals("switch")) {
                 var prevWid = getWantedWorkplaceId(getMyId()); // previous
                 if (occupation.get(prevWid) == Occupation.TWO_OCCUPYING) {
@@ -85,19 +88,34 @@ public class LitWorkshop implements Workshop {
                     assert occupation.get(prevWid) == Occupation.ONE_OCCUPYING;
                     if (getSwitchersCount(prevWid) > 0) {
                         wakeUpAndSet(prevWid, "switch");
-                    } else if (getEnterersCount(wid) > 0 && canEnter(wid)) {
+                    } else if (getEnterersCount(prevWid) > 0 && canEnter(prevWid)) {
                         wakeUpAndSet(prevWid, "enter");
-                    } else if (getEnterersCount(wid) > 0) {
-                        // cant enter
-                        wanting.addBlocked(findFirstWantingToEnter(wid));
+                    } else { // can't let in anybody, leave prev as free
+                        occupation.put(prevWid, Occupation.FREE);
+                        if (getEnterersCount(prevWid) > 0) {
+                            assert(!canEnter(prevWid)); // can't enter
+                            wanting.addBlocked(findFirstWantingToEnter(prevWid));
+                        }
                     }
                 }
             }
-            if (wanting.didUserBlock(getMyId())) {
-
+            // if i blocked s1
+            if (wanting.getWhoBlocked() != null && wanting.getWhoBlocked() == getMyId()) {
+                wakeUpBlocked();
             }
-
-
+            // wait for the second guy to leave the workstation
+            if (occupation.get(wid) == Occupation.TWO_OCCUPYING) {
+                assert useWaiters.get(wid) == null;
+                assert getWantedAction(getMyId()).equals("switch");
+                setIsWaiting(getMyId(), true);
+                useWaiters.put(wid, getMyId());
+                isWaiting.put(getMyId(), true);
+                // one who wakes sets all including removing useWaiters
+                users.get(getMyId()).acquire();
+            } else {
+                occupation.put(wid, Occupation.WORKING);
+                mutex.release();
+            }
 //            if (occupation.get(wid) == Occupation.TWO_OCCUPYING) {
 //                incrementUsersCount(wid);
 //                mutex.release();
@@ -117,7 +135,7 @@ public class LitWorkshop implements Workshop {
 //                    wakeUp(prevWid, "enter");
 //                }
 //            }
-            setCurrentWorkplaceId(wid);
+            //setCurrentWorkplaceId(wid);
         }
         catch (InterruptedException e) {
             throw new RuntimeException("panic: unexpected thread interruption");
@@ -129,12 +147,15 @@ public class LitWorkshop implements Workshop {
         try {
             mutex.acquire();
             wanting.add(getMyId());
+            isWaiting.put(getMyId(), false);
             setWantedAction("switch");
             setWantedWorkplaceId(wid);
             occupation.put(getCurrentWorkplaceId(), Occupation.ONE_OCCUPYING); // set previous
             if (occupation.get(wid) == Occupation.WORKING || occupation.get(wid) == Occupation.TWO_OCCUPYING) {
                 incrementSwitchersCount(wid);
-                setIsWaiting(true);
+                setIsWaiting(getMyId(), true);
+                isWaiting.put(getMyId(), true);
+                System.out.println("thread waiting to switch: " + getMyId() + " set is waiting to true: " + isWaiting(getMyId()));
                 mutex.release();
                 users.get(getMyId()).acquire(); // woke up by leave() or use() on other wid
 //                occupation.put(wid, Occupation.WORKING);
@@ -143,7 +164,7 @@ public class LitWorkshop implements Workshop {
             } else {
                 setWantedWorkplaceId(getCurrentWorkplaceId()); // remember previous wid on wanted
                 setCurrentWorkplaceId(wid);
-                setIsWaiting(false);
+                //setIsWaiting(getMyId(), false);
                 if (occupation.get(wid) == Occupation.ONE_OCCUPYING) {
                     occupation.put(wid, Occupation.TWO_OCCUPYING);
                     useWaiters.put(wid, getMyId());
@@ -167,7 +188,7 @@ public class LitWorkshop implements Workshop {
             WorkplaceId prevWid = getCurrentWorkplaceId();
             mutex.acquire();
             cleanUp();
-            if (getUsersCount(prevWid) > 0) {
+            if (useWaiters.get(prevWid) != null) {
                 throw new RuntimeException("unexpected: should only be possible in switch not leave");
             } else if (getSwitchersCount(prevWid) > 0) {
                 wakeUpAndSet(prevWid, "switch");
@@ -187,18 +208,18 @@ public class LitWorkshop implements Workshop {
         }
     }
 
-    private void cleanUp() {
-        userToWid.remove(getMyId());
+     void cleanUp() {
+        //userToWid.remove(getMyId());
         users.remove(getMyId());
         userInfo.remove(getMyId());
         assert !wanting.remove(getMyId()); // should've been done in use()
     }
 
-    private long getMyId() {
+     long getMyId() {
         return Thread.currentThread().getId();
     }
 
-    private long findFirstWantingToEnter(WorkplaceId wid) {
+     long findFirstWantingToEnter(WorkplaceId wid) {
         for (var user : wanting.usersToList()) {
             if (isWaiting(user) && getWantedAction(user).equals("enter")
                     && getWantedWorkplaceId(user).compareTo(wid) == 0) {
@@ -208,94 +229,126 @@ public class LitWorkshop implements Workshop {
         throw new RuntimeException("no wanting to enter wid despite count > 0");
     }
 
-    private void wakeUpBlocked() {
-        for (var blockedUser : wanting.getBlocked()) {
-
+     void wakeUpBlocked() {
+        var blocked = wanting.getBlocked();
+        var freed = new ArrayList<Long>();
+        for (var blockedUser : blocked) {
+            assert getWantedAction(blockedUser).equals("enter");
+            assert isWaiting(blockedUser);
+            var wantedWid = getWantedWorkplaceId(blockedUser);
+            if (!canEnter(wantedWid)) { // still blocked
+                assert wanting.getLongestWaiting() != blockedUser;
+                assert wanting.getLongestPassCount() == (2L * n) - 2;
+                break; // the rest still blocked too
+            } else {
+                // waiting for workplace or entering, not blocked anymore
+                freed.add(blockedUser);
+                if (occupation.get(wantedWid) == Occupation.FREE) {
+                    occupation.put(wantedWid, Occupation.WORKING);
+                    wanting.pass(blockedUser);
+                    userInfo.get(blockedUser)[1] = null;
+                    userInfo.get(blockedUser)[2] = wantedWid;
+                    setIsWaiting(blockedUser, false);
+                    isWaiting.put(getMyId(), false);
+                    decrementEnterersCount(wantedWid);
+                    users.get(blockedUser).release(); // let in
+                }
+            }
         }
+        wanting.updateWhoBlocked(); // set who blocked
+        blocked.removeAll(freed); // remove from blocked those that are not blocked anymore
     }
 
-    private WorkplaceId getCurrentWorkplaceId() {
+     WorkplaceId getCurrentWorkplaceId() {
         assert userInfo.get(getMyId())[2] != null;
         assert userInfo.get(getMyId())[2] instanceof WorkplaceId;
         return (WorkplaceId) userInfo.get(getMyId())[2];
     }
 
-    private WorkplaceId getWantedWorkplaceId(Long user) {
+     WorkplaceId getWantedWorkplaceId(Long user) {
         assert userInfo.get(user)[1] != null;
         assert userInfo.get(user)[1] instanceof WorkplaceId;
         return (WorkplaceId) userInfo.get(user)[1];
     }
 
-    private String getWantedAction(long user) {
+     String getWantedAction(long user) {
         assert userInfo.get(user)[0] != null;
         assert userInfo.get(user)[0] instanceof String;
         return (String) userInfo.get(user)[0];
     }
 
-    private boolean isWaiting(long user) {
-        assert userInfo.get(user)[3] != null;
-        assert userInfo.get(user)[3] instanceof Boolean;
-        return (boolean) userInfo.get(getMyId())[3];
+     boolean isWaiting(long user) {
+//        assert userInfo.get(user)[3] != null;
+//        assert userInfo.get(user)[3] instanceof Boolean;
+//        return (Boolean) userInfo.get(getMyId())[3];
+         return isWaiting.get(user);
     }
 
-    private void setCurrentWorkplaceId(WorkplaceId wid) {
+     void setCurrentWorkplaceId(WorkplaceId wid) {
         userInfo.get(getMyId())[2] = wid;
     }
 
-    private void setWantedWorkplaceId(WorkplaceId wid) {
+     void setWantedWorkplaceId(WorkplaceId wid) {
         userInfo.get(getMyId())[1] = wid;
     }
 
-    private void setWantedAction(String action) {
+     void setWantedAction(String action) {
         userInfo.get(getMyId())[0] = action;
     }
 
-    private void setIsWaiting(boolean isWaiting) {
-        userInfo.get(getMyId())[3] = isWaiting;
+     void setIsWaiting(long user, boolean isWaiting) {
+        userInfo.get(user)[3] = isWaiting;
+        System.out.println(user + "  " + isWaiting(user) + " == " + isWaiting);
+//        var info = userInfo.get(getMyId());
+//        userInfo.put(getMyId(), new Object[]{info[0], info[1], info[2], isWaiting});
     }
 
-    private int getEnterersCount(WorkplaceId wid) {
+     int getEnterersCount(WorkplaceId wid) {
         return counters.get(wid)[0];
     }
 
-    private int getSwitchersCount(WorkplaceId wid) {
+     int getSwitchersCount(WorkplaceId wid) {
         return counters.get(wid)[1];
     }
 
-    private void incrementEnterersCount(WorkplaceId wid) {
+     void incrementEnterersCount(WorkplaceId wid) {
         counters.get(wid)[0]++;
     }
 
-    private void decrementEnterersCount(WorkplaceId wid) {
+     void decrementEnterersCount(WorkplaceId wid) {
         counters.get(wid)[0]--;
     }
 
-    private void incrementSwitchersCount(WorkplaceId wid) {
+     void incrementSwitchersCount(WorkplaceId wid) {
         counters.get(wid)[1]++;
     }
 
-    private void decrementSwitchersCount(WorkplaceId wid) {
+     void decrementSwitchersCount(WorkplaceId wid) {
         counters.get(wid)[1]--;
     }
 
-    private int getUsersCount(WorkplaceId wid) {
-        return counters.get(wid)[2];
-    }
+//     int getUsersCount(WorkplaceId wid) {
+//        return counters.get(wid)[2];
+//    }
 
-    private void incrementUsersCount(WorkplaceId wid) {
-        assert counters.get(wid)[2] == 0;
-        counters.get(wid)[2] = 1;
-    }
+//     void incrementUsersCount(WorkplaceId wid) {
+//        assert counters.get(wid)[2] == 0;
+//        counters.get(wid)[2] = 1;
+//    }
+//
+//     void decrementUsersCount(WorkplaceId wid) {
+//        assert counters.get(wid)[2] == 1;
+//        counters.get(wid)[2] = 0;
+//    }
 
-    private void decrementUsersCount(WorkplaceId wid) {
-        assert counters.get(wid)[2] == 1;
-        counters.get(wid)[2] = 0;
-    }
-
-    private void wakeUpAndSet(WorkplaceId wid, String action) {
+     void wakeUpAndSet(WorkplaceId wid, String action) {
         // wake up first such that isWaiting to enter to wid
         assert action.equals("switch") || action.equals("enter");
-        for (var wantingId : wanting.usersToList()) {
+        var wantingUsers = wanting.usersToList();
+        System.err.println("wanting que size: " + wantingUsers.size());
+        for (var wantingId : wantingUsers) {
+            System.err.println("wanting user: " + wantingId + " wanted action:" + getWantedAction(wantingId)
+                    + " isWaiting: " + isWaiting(wantingId) + " wanted workplaceId: " + getWantedWorkplaceId(wantingId));
             if (isWaiting(wantingId) && getWantedWorkplaceId(wantingId).compareTo(wid) == 0
                     && getWantedAction(wantingId).equals(action)) {
                 occupation.put(wid, Occupation.WORKING);
@@ -308,7 +361,8 @@ public class LitWorkshop implements Workshop {
                     decrementEnterersCount(wid);
                 }
                 userInfo.get(wantingId)[2] = wid;
-                userInfo.get(wantingId)[3] = false;
+                setIsWaiting(wantingId, false);
+                isWaiting.put(getMyId(), false);
                 users.get(wantingId).release();
                 return;
             }
@@ -317,20 +371,23 @@ public class LitWorkshop implements Workshop {
         // assert false;
     }
 
-    private void wakeUpUseWaiterAndSet(WorkplaceId wid) {
-        assert useWaiters.get(wid).compareTo(null) != 0;
+     void wakeUpUseWaiterAndSet(WorkplaceId wid) {
+        assert useWaiters.get(wid) != null;
         var waiting = useWaiters.get(wid);
         occupation.put(wid, Occupation.WORKING);
-        decrementUsersCount(wid);
+        //decrementUsersCount(wid);
         userInfo.get(waiting)[2] = wid;
-        userInfo.get(waiting)[3] = false;
+        setIsWaiting(waiting, false);
+        isWaiting.put(getMyId(), false);
         useWaiters.remove(wid);
         users.get(waiting).release();
     }
 
     // checks whether new user can enter the workshop
     // (doesn't violate the 2*N condition)
-    private boolean canEnter(WorkplaceId wid) {
+     boolean canEnter(WorkplaceId wid) {
+        if (wanting.empty())
+            return true;
         var longestWanting = wanting.getLongestWaiting();
         return wanting.getLongestPassCount() < (2L * n) - 2
                 || (isWaiting(longestWanting) && getWantedWorkplaceId(longestWanting).compareTo(wid) == 0

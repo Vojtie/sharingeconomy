@@ -10,9 +10,7 @@ import java.util.Collection;
 
 public final class WorkshopFactory {
 
-    public final static Workshop newWorkshop(
-            Collection<Workplace> workplaces
-    ) {
+    public final static Workshop newWorkshop(Collection<Workplace> workplaces) {
         return new LitWorkshop(workplaces);
     }
     
