@@ -5,12 +5,19 @@
  *
  * Author: Konrad Iwanicki (iwanicki@mimuw.edu.pl)
  */
+package cp2022.demo;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.List;
 import java.util.concurrent.ThreadLocalRandom;
+
+import cp2022.base.Workplace;
+import cp2022.base.WorkplaceId;
+import cp2022.base.Workshop;
+import cp2022.solution.WorkshopFactory;
+
 
 public class TroysWorkshop {
     

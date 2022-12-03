@@ -1,3 +1,7 @@
+package cp2022.solution;
+
+import cp2022.base.Workplace;
+
 class WorkplaceGuard extends Workplace {
 
     private final Workplace workplace;

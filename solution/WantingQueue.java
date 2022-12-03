@@ -1,3 +1,4 @@
+package cp2022.solution;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -30,7 +31,7 @@ class WantingQueue {
                 break;
             } else {
                 other[1]++;
-                assert other[1] < (2L * n) - 1;
+                assert other[1] < 2L * n;
             }
         }
     }
@@ -46,7 +47,7 @@ class WantingQueue {
     }
 
     boolean empty() {
-        return userPassCount.size() == 0;
+        return userPassCount.isEmpty();
     }
 
     Long getWhoBlocked() {
@@ -66,7 +67,6 @@ class WantingQueue {
             oneWhoBlocked = null;
     }
 
-
     List<Long> getBlocked() {
         var blocked = this.blocked;
         // this.blocked.clear();
@@ -79,6 +79,14 @@ class WantingQueue {
 
     List<Long> usersToList() {
         return userPassCount.stream().map(x -> x[0]).collect(Collectors.toList());
+    }
+
+    void printBlocked() {
+        System.out.print("blocked: ");
+        for (var blockedUser : blocked) {
+            System.out.print(blockedUser + " , ");
+        }
+        System.out.println();
     }
 }
 

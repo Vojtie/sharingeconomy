@@ -5,6 +5,7 @@
  *
  * Author: Konrad Iwanicki (iwanicki@mimuw.edu.pl)
  */
+package cp2022.base;
 
 public abstract class Workplace {
     
@@ -13,7 +14,7 @@ public abstract class Workplace {
     protected Workplace(WorkplaceId id) {
         this.id = id;
     }
-
+    
     public final WorkplaceId getId() {
         return this.id;
     }

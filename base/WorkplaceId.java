@@ -5,6 +5,8 @@
  *
  * Author: Konrad Iwanicki (iwanicki@mimuw.edu.pl)
  */
+package cp2022.base;
+
 
 public abstract class WorkplaceId implements Comparable<WorkplaceId> {
 
