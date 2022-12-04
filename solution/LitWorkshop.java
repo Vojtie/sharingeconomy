@@ -84,7 +84,7 @@ public class LitWorkshop implements Workshop {
             setAction(myId, Action.ENTER);
             setWantedWorkplaceId(myId, wid);
             joinQueue();
-            var canEnter = canEnter(wid);
+            var canEnter = canEnter();
             if (!canEnter || getOccupation(wid) != Occupation.FREE) {
                 setIsWaiting(myId, true);
                 if (!canEnter) {
@@ -122,7 +122,7 @@ public class LitWorkshop implements Workshop {
     }
 
     void removeSwitching(WorkplaceId wid) {
-        var removed = switching.remove(wid);
+        switching.remove(wid);
     }
 
     Long getSwitching(WorkplaceId wid) {
@@ -294,7 +294,7 @@ public class LitWorkshop implements Workshop {
                 continue;
             var blockedUser = user;
             var wantedWid = getWantedWorkplaceId(blockedUser);
-            if (!canEnter(wantedWid) && getFirstWanting() != blockedUser)
+            if (!canEnter() && getFirstWanting() != blockedUser)
                 break; // remains blocked, the rest as well
             else {
                 // waiting for workplace or entering, not blocked anymore
@@ -440,7 +440,7 @@ public class LitWorkshop implements Workshop {
 
     // checks whether new user can enter the workshop
     // (doesn't violate the 2*N condition)
-     boolean canEnter(WorkplaceId wid) {
+     boolean canEnter() {
         return wanting.empty() || wanting.getLongestPassCount() < (2L * n) - 1;
     }
 
@@ -450,7 +450,7 @@ public class LitWorkshop implements Workshop {
             return true;
         }
         if (getEnteringCount(wid) > 0) {
-            if (canEnter(wid) || firstWantsToEnter(wid)) {
+            if (canEnter() || firstWantsToEnter(wid)) {
                 wakeUpAndSet(wid, Action.ENTER);
                 return true;
             } else markAsBlocked(getFirstWantingToEnter(wid));
