@@ -51,7 +51,6 @@ class WantingQueue {
     }
 
     Long getWhoBlocked() {
-        //assert oneWhoBlocked != null;
         return oneWhoBlocked;
     }
 
@@ -68,13 +67,7 @@ class WantingQueue {
     }
 
     List<Long> getBlocked() {
-        var blocked = this.blocked;
-        // this.blocked.clear();
         return blocked;
-    }
-
-    void clearBlocked() {
-        blocked.clear();
     }
 
     List<Long> usersToList() {
