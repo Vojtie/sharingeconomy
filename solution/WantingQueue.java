@@ -5,7 +5,7 @@ import java.util.stream.Collectors;
 
 class WantingQueue {
 
-    private final List<long[]> userPassCount = new ArrayList<>(); // long[] == {tid, passCount}
+    private final List<long[]> userPassCount = new ArrayList<>(); // long[] == {threadId, passCount}
 
     private final List<Long> blocked = new ArrayList<>();
 
@@ -72,14 +72,6 @@ class WantingQueue {
 
     List<Long> usersToList() {
         return userPassCount.stream().map(x -> x[0]).collect(Collectors.toList());
-    }
-
-    void printBlocked() {
-        System.out.print("blocked: ");
-        for (var blockedUser : blocked) {
-            System.out.print(blockedUser + " , ");
-        }
-        System.out.println();
     }
 }
 

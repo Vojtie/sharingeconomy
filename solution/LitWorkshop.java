@@ -27,15 +27,15 @@ public class LitWorkshop implements Workshop {
      *      and do not violate the liveness condition or after being woken up by user
      *      who just left that workplace (leave()) or already switched to other (use(other)).
      *      Users can switch to other workplace provided that nobody is occupying it or the one who
-     *      is currently occupying it is not working and belong to the same cycle of users wanting to switch.
+     *      is currently occupying it is not working and belongs to the same cycle of users wanting to switch but can
+     *      start working only after the other user who wants to switch from that workplace did it.
      *
      *  liveness - users who want to switch or enter are stored in a queue (WantingQueue instance) which holds
      *      information how many users entered the workshop after they started wanting to switch or enter for each
      *      wanting user. If user1 wants to enter the workshop but there is a user who has already passed 2*N-1
      *      entering users, user1 is blocked until the blocking user manages to switch or enter.
-     *
-     *
      */
+
     private final int n;
     private final Map<WorkplaceId, Workplace> workplaces = new ConcurrentHashMap<>();
     private final Map<Long, Semaphore> users = new ConcurrentHashMap<>(); // every thread has its own semaphore
@@ -79,7 +79,6 @@ public class LitWorkshop implements Workshop {
         try {
             mutex.acquire();
             var myId = getMyId();
-            //System.out.println(myId + " attempts to enter " + wid);
             users.put(myId, new Semaphore(0));
             setIsWaiting(myId, false);
             setAction(myId, Action.ENTER);
@@ -87,20 +86,15 @@ public class LitWorkshop implements Workshop {
             joinQueue();
             var canEnter = canEnter(wid);
             if (!canEnter || getOccupation(wid) != Occupation.FREE) {
-                //System.out.println(myId + " cant enter " + wid + " " + getOccupation(wid) + ", waiting");
                 setIsWaiting(myId, true);
                 if (!canEnter) {
-                    assert wanting.getLongestPassCount() == (2L * n) - 1;
                     markAsBlocked(myId);
                 }
                 incrementEnteringCount(wid);
                 isWaiting.put(myId, true);
-                assert  users.get(myId).availablePermits() == 0;
                 mutex.release();
                 users.get(myId).acquire();
             } else {
-                //System.out.println(myId + " enters " + wid);
-                assert getOccupation(wid) == Occupation.FREE;
                 setOccupation(wid, Occupation.WORKING);
                 wanting.pass(myId);
                 setIsWaiting(myId, false);
@@ -124,13 +118,11 @@ public class LitWorkshop implements Workshop {
     }
 
     void addSwitching(WorkplaceId from, Long userId) {
-        assert switching.get(from) == null;
         switching.put(from, userId);
     }
 
     void removeSwitching(WorkplaceId wid) {
         var removed = switching.remove(wid);
-        assert removed != null;
     }
 
     Long getSwitching(WorkplaceId wid) {
@@ -159,22 +151,15 @@ public class LitWorkshop implements Workshop {
 
     void wakeUpCycle(WorkplaceId wid) {
         var next = getNextWid(wid);
-        assert next != null;
-        //System.out.println(getMyId() + " begin waking up cycle:");
         while (next != wid) {
             var switching = getSwitching(next);
             removeSwitching(next);
-            assert switching != null;
             next = getWantedWorkplaceId(switching);
-            assert next != null;
-            //System.out.println("Waking up " + switching + " from " + prev + " to " + next);
             setOccupation(next, Occupation.TWO_OCCUPYING);
             setCurrentWorkplaceId(switching, next);
-            assert isWaiting(switching);
             setIsWaiting(switching, false);
             decrementSwitchingCount(next);
             useWaiting.put(next, switching);
-            assert users.get(switching).availablePermits() == 0;
             users.get(switching).release();
         }
     }
@@ -183,17 +168,13 @@ public class LitWorkshop implements Workshop {
     public Workplace switchTo(WorkplaceId wid) {
         try {
             mutex.acquire();
-            //System.out.println(getMyId() + " attempts to switch to " + wid + " from " + getCurrentWorkplaceId(getMyId()));
             var myId = getMyId();
             joinQueue();
-            assert !isWaiting(myId);
             setAction(myId, Action.SWITCH);
             setWantedWorkplaceId(myId, wid);
             setPreviousWorkplaceId(myId, getCurrentWorkplaceId(myId));
             if (getCurrentWorkplaceId(myId).compareTo(wid) == 0) {
                 // attempts to switch to the same workplace
-                //System.out.println(myId + " attempts to switch to the same workplace");
-                assert getOccupation(wid) == Occupation.WORKING;
                 setCurrentWorkplaceId(myId, wid);
                 mutex.release();
                 
@@ -202,7 +183,6 @@ public class LitWorkshop implements Workshop {
             setOccupation(getPreviousWorkplaceId(myId), Occupation.SWITCHING);
             addSwitching(getPreviousWorkplaceId(myId), myId);
             if (getOccupation(wid) == Occupation.FREE) {
-                //System.out.println(getMyId() + " can switch to " + wid + " : " + getOccupation(wid) + ", occupying");
                 removeSwitching(getPreviousWorkplaceId(myId));
                 setCurrentWorkplaceId(myId, wid);
                 setOccupation(wid, Occupation.WORKING);
@@ -210,15 +190,12 @@ public class LitWorkshop implements Workshop {
                 
                 return workplaces.get(wid);
             } else if (getOccupation(wid) == Occupation.SWITCHING && isCycle(wid)) {
-                //System.out.println(getMyId() + "found cycle, can switch to " + wid + " : " + getOccupation(wid));
                 setOccupation(wid, Occupation.TWO_OCCUPYING);
                 wakeUpCycle(getPreviousWorkplaceId(myId));
                 removeSwitching(getPreviousWorkplaceId(myId));
                 useWaiting.put(wid, myId);
                 mutex.release();
             } else {
-                //System.out.println(getMyId() + " cant switch to " + wid + " : " + getOccupation(wid));
-                assert users.get(myId).availablePermits() == 0;
                 incrementSwitchingCount(wid);
                 setIsWaiting(myId, true);
                 mutex.release();
@@ -235,7 +212,6 @@ public class LitWorkshop implements Workshop {
     void use(WorkplaceId wid) {
         try {
             this.mutex.acquire();
-            //System.out.println(getMyId() + " attempts to use " + wid + " : " + getOccupation(wid));
             var myId = getMyId();
             setCurrentWorkplaceId(myId, wid);
             exitQueue();
@@ -244,21 +220,18 @@ public class LitWorkshop implements Workshop {
                 if (getOccupation(prevWid) == Occupation.TWO_OCCUPYING) {
                     wakeUpUseWaiterAndSet(prevWid);
                 } else {
-                    assert getOccupation(prevWid) == Occupation.SWITCHING;
                     var letIn = tryLetIn(prevWid);
                     if (!letIn) {
                         setOccupation(prevWid, Occupation.FREE);
                     }
                 }
-            } else assert actions.get(myId) != Action.SWITCH || (getPreviousWorkplaceId(myId).compareTo(wid) == 0 && getOccupation(wid) == Occupation.WORKING);
-
+            }
             var blocking = wanting.getWhoBlocked();
             if (blocking != null && blocking == myId) {
                 tryWakeUpBlocked();
             }
             if (getOccupation(wid) == Occupation.TWO_OCCUPYING) {
                 // wait for the second guy to leave the workstation
-                assert getAction(myId) == Action.SWITCH;
                 setIsWaiting(myId, true);
                 // one who wakes sets all including removing useWaiting
                 mutex.release();
@@ -280,8 +253,6 @@ public class LitWorkshop implements Workshop {
             var myId = getMyId();
             WorkplaceId prevWid = getCurrentWorkplaceId(myId);
             cleanUp();
-            //System.out.println(myId + " leaves, prevWid switching: " + getSwitchingCount(prevWid) + " entering: " + getEnteringCount(prevWid));
-            assert useWaiting.get(prevWid) == null;
             if (!tryLetIn(prevWid)) {
                 setOccupation(prevWid, Occupation.FREE);
             }
@@ -299,7 +270,6 @@ public class LitWorkshop implements Workshop {
         previousWorkplaceIds.remove(myId);
         currentWorkplaceIds.remove(myId);
         isWaiting.remove(myId);
-        assert !wanting.remove(myId); // have been done in use()
     }
     
     long getMyId() {
@@ -307,7 +277,6 @@ public class LitWorkshop implements Workshop {
     }
     
     long getFirstWantingToEnter(WorkplaceId wid) {
-        assert getEnteringCount(wid) > 0;
         for (var user : wanting.usersToList()) {
             if (isWaiting(user) && getAction(user) == Action.ENTER
                     && getWantedWorkplaceId(user).compareTo(wid) == 0) {
@@ -318,34 +287,25 @@ public class LitWorkshop implements Workshop {
     }
 
     void tryWakeUpBlocked() {
-        //System.out.println(getMyId() + " attempting to wake up blocked");
         var blocked = wanting.getBlocked();
         var freed = new ArrayList<Long>();
         for (var user : wanting.usersToList()) {
             if (!blocked.contains(user))
                 continue;
             var blockedUser = user;
-            assert getAction(blockedUser) == Action.ENTER;
-            assert isWaiting(blockedUser);
             var wantedWid = getWantedWorkplaceId(blockedUser);
             if (!canEnter(wantedWid) && getFirstWanting() != blockedUser)
                 break; // remains blocked, the rest as well
-                //assert wanting.getLongestWaiting() != blockedUser;
-                //assert wanting.getLongestPassCount() == (2L * n) - 1;
-                //System.out.println(getMyId() + " blocked " + blockedUser + " still blocked by " + wanting.getLongestWaiting() + " with pass count == 2N-1? " + (wanting.getLongestPassCount() == 2L*n-1) + " isWaiting " + isWaiting(getFirstWanting()));
             else {
                 // waiting for workplace or entering, not blocked anymore
                 freed.add(blockedUser);
                 if (getOccupation(wantedWid) == Occupation.FREE) {
-                    //System.out.println(getMyId() + " blocked " + blockedUser + " freed and entering");
                     setOccupation(wantedWid, Occupation.WORKING);
                     wanting.pass(blockedUser);
                     setCurrentWorkplaceId(blockedUser, wantedWid);
                     setIsWaiting(blockedUser, false);
                     decrementEnteringCount(wantedWid);
                     users.get(blockedUser).release(); // let in
-                } else {
-                    //System.out.println(getMyId() + " blocked " + blockedUser + " freed not entering");
                 }
             }
         }
@@ -354,7 +314,6 @@ public class LitWorkshop implements Workshop {
     }
     
     void setOccupation(WorkplaceId wid, Occupation occ) {
-        //System.out.println(getMyId() + " set occ on " + wid + " to " + occ);
         occupation.put(wid, occ);
     }
     
@@ -367,7 +326,6 @@ public class LitWorkshop implements Workshop {
     }
 
     void setIsWaiting(long user, boolean bool) {
-        //System.out.println(getMyId() + " set isWaiting to " + bool + " for user " + user);
         isWaiting.put(user, bool);
     }
 
@@ -447,18 +405,13 @@ public class LitWorkshop implements Workshop {
         // wake up first such that isWaiting to occupy wid
 
         var wantingUsers = wanting.usersToList();
-        //System.out.println(getMyId() + " waking up " + action + " on " + wid);
 
         for (var wantingId : wantingUsers) {
-//            ////System.out.println("wanting user: " + wantingId + " | action:" + getAction(wantingId)
-//                    + " | isWaiting: " + isWaiting(wantingId) + " | wanted workplaceId: " + getWantedWorkplaceId(wantingId));
             if (isWaiting(wantingId) && getWantedWorkplaceId(wantingId).compareTo(wid) == 0
                     && getAction(wantingId) == action) {
-                //System.out.println(getMyId() + " let in " + wantingId + " " + getAction(wantingId) + " on " + wid);
                 setOccupation(wid, Occupation.WORKING);
                 if (action == Action.SWITCH) {
                     removeSwitching(getPreviousWorkplaceId(wantingId));
-                    //setPreviousWorkplaceId(wantingId, getCurrentWorkplaceId(wantingId));
                     decrementSwitchingCount(wid);
                 } else {
                     wanting.pass(wantingId);
@@ -475,9 +428,7 @@ public class LitWorkshop implements Workshop {
     }
 
      void wakeUpUseWaiterAndSet(WorkplaceId wid) {
-        assert useWaiting.get(wid) != null;
         var waiting = useWaiting.get(wid);
-        //System.out.println(getMyId() + " waking up useWaiter " + waiting + " on " + wid);
         setOccupation(wid, Occupation.WORKING);
         setCurrentWorkplaceId(waiting, wid);
         useWaiting.remove(wid);
@@ -522,11 +473,6 @@ public class LitWorkshop implements Workshop {
     void markAsBlocked(long user) {
         if (wanting.getBlocked().contains(user))
             return;
-        //System.out.println(getMyId() + " marking " + user + " as blocked");
-        //wanting.printBlocked();
-        assert getAction(user) == Action.ENTER;
-        assert wanting.getLongestPassCount() == 2L*n-1;
-        assert getOccupation(getWantedWorkplaceId(wanting.getLongestWaiting())) != Occupation.FREE;
         wanting.addBlocked(user);
     }
 }
