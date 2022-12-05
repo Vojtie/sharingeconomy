@@ -22,13 +22,14 @@ public class LitWorkshop implements Workshop {
      * Solution overview:
      *  I used decorator pattern on Workplace class (WorkplaceGuard) in order to ensure security of workplaces usage.
      *
-     *  safety - users can enter a workplace provided that nobody is currently occupying it -
-     *      they can begin occupying it by themselves if its occupation is set to FREE
-     *      and do not violate the liveness condition or after being woken up by user
-     *      who just left that workplace (leave()) or already switched to other (use(other)).
-     *      Users can switch to other workplace provided that nobody is occupying it or the one who
-     *      is currently occupying it is not working and belongs to the same cycle of users wanting to switch but can
-     *      start working only after the other user who wants to switch from that workplace did it.
+     *  safety - users can enter a workplace provided that nobody is currently occupying it and
+     *      do not violate the liveness (2*N) condition.
+     *      They may begin occupying it by themselves if its occupation is set to FREE
+     *      or after being woken up by user who just left that workplace (leave()) or already
+     *      switched to other (use(other)). Users can switch to other workplace provided that nobody
+     *      is occupying it or the one whois currently occupying it is not working and belongs to the
+     *      same cycle of users wanting to switch but can start working only after the other user who
+     *      wants to switch from that workplace did it.
      *
      *  liveness - users who want to switch or enter are stored in a queue (WantingQueue instance) which holds
      *      information how many users entered the workshop after they started wanting to switch or enter for each
@@ -106,61 +107,6 @@ public class LitWorkshop implements Workshop {
         }
         catch (InterruptedException e) {
             throw new RuntimeException("panic: unexpected thread interruption");
-        }
-    }
-
-    void joinQueue() {
-        wanting.add(getMyId());
-    }
-    
-    void exitQueue() {
-        wanting.remove(getMyId());
-    }
-
-    void addSwitching(WorkplaceId from, Long userId) {
-        switching.put(from, userId);
-    }
-
-    void removeSwitching(WorkplaceId wid) {
-        switching.remove(wid);
-    }
-
-    Long getSwitching(WorkplaceId wid) {
-        return switching.get(wid);
-    }
-
-    WorkplaceId getNextWid(WorkplaceId wid) {
-        var switcherId = getSwitching(wid);
-        if (switcherId != null) {
-            return getWantedWorkplaceId(switcherId);
-        }
-        return null;
-    }
-
-    boolean isCycle(WorkplaceId wid) {
-        var rabbit = getNextWid(wid);
-        var turtle = wid;
-        while (rabbit != null && turtle != null && rabbit != turtle) {
-            rabbit = getNextWid(rabbit);
-            if (rabbit == null) break;
-            rabbit = getNextWid(rabbit);
-            turtle = getNextWid(turtle);
-        }
-        return rabbit != null && turtle != null;
-    }
-
-    void wakeUpCycle(WorkplaceId wid) {
-        var next = getNextWid(wid);
-        while (next != wid) {
-            var switching = getSwitching(next);
-            removeSwitching(next);
-            next = getWantedWorkplaceId(switching);
-            setOccupation(next, Occupation.TWO_OCCUPYING);
-            setCurrentWorkplaceId(switching, next);
-            setIsWaiting(switching, false);
-            decrementSwitchingCount(next);
-            useWaiting.put(next, switching);
-            users.get(switching).release();
         }
     }
 
@@ -275,6 +221,61 @@ public class LitWorkshop implements Workshop {
     long getMyId() {
         return Thread.currentThread().getId();
     }
+
+    void joinQueue() {
+        wanting.add(getMyId());
+    }
+
+    void exitQueue() {
+        wanting.remove(getMyId());
+    }
+
+    void addSwitching(WorkplaceId from, Long userId) {
+        switching.put(from, userId);
+    }
+
+    void removeSwitching(WorkplaceId wid) {
+        switching.remove(wid);
+    }
+
+    Long getSwitching(WorkplaceId wid) {
+        return switching.get(wid);
+    }
+
+    WorkplaceId getNextWid(WorkplaceId wid) {
+        var switcherId = getSwitching(wid);
+        if (switcherId != null) {
+            return getWantedWorkplaceId(switcherId);
+        }
+        return null;
+    }
+
+    boolean isCycle(WorkplaceId wid) {
+        var rabbit = getNextWid(wid);
+        var turtle = wid;
+        while (rabbit != null && turtle != null && rabbit != turtle) {
+            rabbit = getNextWid(rabbit);
+            if (rabbit == null) break;
+            rabbit = getNextWid(rabbit);
+            turtle = getNextWid(turtle);
+        }
+        return rabbit != null && turtle != null;
+    }
+
+    void wakeUpCycle(WorkplaceId wid) {
+        var next = getNextWid(wid);
+        while (next != wid) {
+            var switching = getSwitching(next);
+            removeSwitching(next);
+            next = getWantedWorkplaceId(switching);
+            setOccupation(next, Occupation.TWO_OCCUPYING);
+            setCurrentWorkplaceId(switching, next);
+            setIsWaiting(switching, false);
+            decrementSwitchingCount(next);
+            useWaiting.put(next, switching);
+            users.get(switching).release();
+        }
+    }
     
     long getFirstWantingToEnter(WorkplaceId wid) {
         for (var user : wanting.usersToList()) {
@@ -292,20 +293,19 @@ public class LitWorkshop implements Workshop {
         for (var user : wanting.usersToList()) {
             if (!blocked.contains(user))
                 continue;
-            var blockedUser = user;
-            var wantedWid = getWantedWorkplaceId(blockedUser);
-            if (!canEnter() && getFirstWanting() != blockedUser)
+            var wantedWid = getWantedWorkplaceId(user);
+            if (!canEnter() && getFirstWanting() != user)
                 break; // remains blocked, the rest as well
             else {
                 // waiting for workplace or entering, not blocked anymore
-                freed.add(blockedUser);
+                freed.add(user);
                 if (getOccupation(wantedWid) == Occupation.FREE) {
                     setOccupation(wantedWid, Occupation.WORKING);
-                    wanting.pass(blockedUser);
-                    setCurrentWorkplaceId(blockedUser, wantedWid);
-                    setIsWaiting(blockedUser, false);
+                    wanting.pass(user);
+                    setCurrentWorkplaceId(user, wantedWid);
+                    setIsWaiting(user, false);
                     decrementEnteringCount(wantedWid);
-                    users.get(blockedUser).release(); // let in
+                    users.get(user).release(); // let in
                 }
             }
         }
@@ -355,9 +355,7 @@ public class LitWorkshop implements Workshop {
 
     Action getAction(long user) {
         var res = actions.get(user);
-        if (res == null) {
-            throw new RuntimeException("null action");
-        }
+        assert res != null;
         return res;
     }
     
@@ -367,25 +365,19 @@ public class LitWorkshop implements Workshop {
     
     WorkplaceId getWantedWorkplaceId(long user) {
         var res = wantedWorkplaceIds.get(user);
-        if (res == null) {
-            throw new RuntimeException("null wantedWid");
-        }
+        assert res != null;
         return res;
     }
 
     WorkplaceId getCurrentWorkplaceId(long user) {
         var res = currentWorkplaceIds.get(user);
-        if (res == null) {
-            throw new RuntimeException("null currentWorkplaceId");
-        }
+        assert res != null;
         return res;
     }
     
     WorkplaceId getPreviousWorkplaceId(long user) {
         var res = previousWorkplaceIds.get(user);
-        if (res == null) {
-            throw new RuntimeException("null previousWorkplaceId");
-        }
+        assert res != null;
         return res;
     }
     
@@ -403,12 +395,13 @@ public class LitWorkshop implements Workshop {
 
      void wakeUpAndSet(WorkplaceId wid, Action action) {
         // wake up first such that isWaiting to occupy wid
-
         var wantingUsers = wanting.usersToList();
 
         for (var wantingId : wantingUsers) {
-            if (isWaiting(wantingId) && getWantedWorkplaceId(wantingId).compareTo(wid) == 0
-                    && getAction(wantingId) == action) {
+            if (isWaiting(wantingId)
+                    && getWantedWorkplaceId(wantingId).compareTo(wid) == 0
+                    && getAction(wantingId) == action)
+            {
                 setOccupation(wid, Occupation.WORKING);
                 if (action == Action.SWITCH) {
                     removeSwitching(getPreviousWorkplaceId(wantingId));
@@ -424,7 +417,7 @@ public class LitWorkshop implements Workshop {
                 return;
             }
         }
-        throw new RuntimeException("unexpected error: no one to be woken up");
+        assert false;
     }
 
      void wakeUpUseWaiterAndSet(WorkplaceId wid) {
@@ -440,7 +433,7 @@ public class LitWorkshop implements Workshop {
 
     // checks whether new user can enter the workshop
     // (doesn't violate the 2*N condition)
-     boolean canEnter() {
+    boolean canEnter() {
         return wanting.empty() || wanting.getLongestPassCount() < (2L * n) - 1;
     }
 
@@ -471,8 +464,7 @@ public class LitWorkshop implements Workshop {
     }
     
     void markAsBlocked(long user) {
-        if (wanting.getBlocked().contains(user))
-            return;
+        if (wanting.getBlocked().contains(user)) return;
         wanting.addBlocked(user);
     }
 }

@@ -1,4 +1,5 @@
 package cp2022.solution;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -21,8 +22,8 @@ class WantingQueue {
         userPassCount.add(new long[]{user, 0L});
     }
 
-    boolean remove(long user) {
-        return userPassCount.removeIf(x -> x[0] == user);
+    void remove(long user) {
+        userPassCount.removeIf(x -> x[0] == user);
     }
 
     void pass(long user) {
